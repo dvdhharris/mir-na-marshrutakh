@@ -106,6 +106,64 @@ function setView(){svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${v
 svg.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY<0?.88:1.14,worldPoint(e))},{passive:false});svg.addEventListener('pointerdown',e=>{if(e.target.closest('.city'))return;let ctm=svg.getScreenCTM();drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y,sx:ctm.a,sy:ctm.d,moved:false};svg.setPointerCapture(e.pointerId);svg.classList.add('grabbing')});svg.addEventListener('pointermove',e=>{if(!drag)return;let dx=(e.clientX-drag.x)/drag.sx,dy=(e.clientY-drag.y)/drag.sy;if(Math.abs(dx)+Math.abs(dy)>2)drag.moved=true;view.x=Math.max(0,Math.min(1200-view.w,drag.vx-dx));view.y=Math.max(0,Math.min(620-view.h,drag.vy-dy));setView()});svg.addEventListener('pointerup',()=>{if(drag){setTimeout(()=>{drag=null},0);svg.classList.remove('grabbing')}});
 document.querySelectorAll('.speed').forEach(b=>b.onclick=()=>{speed=Number(b.dataset.speed);document.querySelectorAll('.speed').forEach(x=>x.classList.remove('active'));b.classList.add('active')});gameTimer=setInterval(()=>{if(speed===0)return;day+=speed;let moved=routes.reduce((a,r)=>a+Math.ceil(r.vehicles*speed),0);passengers+=moved;let inc=routes.reduce((a,r)=>a+Math.round(r.dist*(r.mode==='plane'?2.6:r.mode==='train'?1.3:r.mode==='ship'?1:.7)),0);if(!sandboxEnabled)money+=inc*speed;updateUI()},1500);
 document.getElementById('countrySearch').addEventListener('input',renderCountryBrowser);document.getElementById('countryInfraSearch').addEventListener('input',()=>{document.getElementById('countryInfrastructure').dataset.scrollTop='0';renderCountryInfrastructure()});document.getElementById('cityLayerSearch').addEventListener('input',()=>{document.getElementById('cityTabs').dataset.scrollTop='0';cityTabSignature='!';updateCityTabs()});document.getElementById('search').addEventListener('input',e=>{let q=e.target.value.toLowerCase();document.querySelectorAll('.country').forEach(b=>b.style.display=b.textContent.toLowerCase().includes(q)?'flex':'none')});document.getElementById('help').onclick=()=>toast('Добавьте города кнопкой «Новый город», выберите авиацию, поезд, автобус или море и нажмите два города. Ctrl+Z отменяет действие, Ctrl+Y возвращает его. Маршруты и города можно изменить или удалить.');document.getElementById('resetGame').onclick=()=>{pushUndo();cities=[];routes=[];routeSeq=1;day=1;money=12500;passengers=0;createdCount=0;selected=null;routeStart=null;render();toast('Новая игра началась. Города и маршруты очищены.')};document.querySelectorAll('.mobile-nav button').forEach(b=>b.onclick=()=>{let panel=b.dataset.mobilePanel;document.querySelectorAll('.mobile-nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.sidebar').forEach(x=>x.classList.remove('mobile-open'));if(panel==='left')document.querySelector('.sidebar:not(.right)').classList.add('mobile-open');if(panel==='right')document.querySelector('.sidebar.right').classList.add('mobile-open')});let installPrompt=null,installButton=document.getElementById('installApp');if(window.matchMedia('(display-mode: standalone)').matches||navigator.standalone)installButton.style.display='none';window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e});installButton.onclick=async()=>{if(installPrompt){installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;return}toast(/iphone|ipad|ipod/i.test(navigator.userAgent)?'Safari: Поделиться → На экран Домой.':'Откройте меню браузера и выберите «Установить приложение».')};window.addEventListener('appinstalled',()=>installButton.style.display='none');
+function getDuplicateRouteGroups(cityId='all'){
+ let groups=new Map();
+ routes.forEach((route,index)=>{
+  if(cityId!=='all'&&route.a!==cityId&&route.b!==cityId)return;
+  let key=`${route.mode}::${routePairKey(route.a,route.b)}`;
+  if(!groups.has(key))groups.set(key,{key,mode:route.mode,a:route.a,b:route.b,indexes:[]});
+  groups.get(key).indexes.push(index);
+ });
+ return [...groups.values()].filter(group=>group.indexes.length>1).sort((x,y)=>{
+  let xa=cities.find(c=>c.id===x.a)?.name||'',ya=cities.find(c=>c.id===y.a)?.name||'';
+  return xa.localeCompare(ya,'ru')||x.mode.localeCompare(y.mode);
+ });
+}
+function removeDuplicateRoutes(key){
+ let group=getDuplicateRouteGroups(routeCityFilter).find(item=>item.key===key);
+ if(!group)return;
+ let removeIndexes=new Set(group.indexes.slice(1)),removed=routes.filter((_,index)=>removeIndexes.has(index));
+ if(!removed.length)return;
+ pushUndo();
+ if(!sandboxEnabled)money+=removed.reduce((sum,route)=>sum+(Number(route.cost)||0),0);
+ routes=routes.filter((_,index)=>!removeIndexes.has(index));
+ render();
+ toast(`Удалено дубликатов: ${removed.length}. Оставлен один маршрут.`);
+}
+function renderClearRoutesControl(routeList){
+ let controls=document.getElementById('clearRoutesControl');
+ if(!controls){controls=document.createElement('div');controls.id='clearRoutesControl';controls.className='city-card';controls.innerHTML='<div class="sectitle">Управление маршрутами</div><div class="subtle" style="margin-bottom:8px">Удаление линий не затронет города и провинции.</div><button type="button" class="iconbtn secondary" id="clearAllRoutes" style="width:100%;color:#ffc4b8;border-color:#704941">🗑 Удалить все маршруты</button>';}
+ let duplicatePanel=document.getElementById('duplicateRoutePanel');routeList.parentNode.insertBefore(controls,duplicatePanel||routeList);
+ let button=document.getElementById('clearAllRoutes');button.disabled=!routes.length;button.style.opacity=routes.length?'1':'.55';button.title=routes.length?`Удалить маршрутов: ${routes.length}`:'Маршрутов для удаления нет';
+ let modal=document.getElementById('clearAllRoutesModal');
+ if(!modal){modal=document.createElement('div');modal.className='modal-back';modal.id='clearAllRoutesModal';modal.innerHTML='<div class="modal"><h3>Удалить все маршруты?</h3><div class="subtle">Все линии и расписания будут удалены. Города и провинции останутся на карте. Действие можно отменить.</div><div class="modal-actions"><button type="button" class="close" id="cancelClearRoutes">Отмена</button><button type="button" class="primary" id="confirmClearRoutes" style="margin:0;background:#a64e43">Удалить маршруты</button></div></div>';document.body.appendChild(modal);modal.onclick=e=>{if(e.target===modal)modal.classList.remove('show')};}
+ button.onclick=()=>{if(routes.length)modal.classList.add('show')};
+ document.getElementById('cancelClearRoutes').onclick=()=>modal.classList.remove('show');
+ document.getElementById('confirmClearRoutes').onclick=()=>{
+  if(!routes.length){modal.classList.remove('show');return}
+  let removed=routes.length;pushUndo();if(!sandboxEnabled)money+=routes.reduce((sum,route)=>sum+(Number(route.cost)||0),0);routes=[];routeStart=null;modal.classList.remove('show');render();toast(`Удалено маршрутов: ${removed}. Города и провинции сохранены.`);
+ };
+}
+function renderDuplicateRoutePanel(){
+ let routeList=document.getElementById('routeCards');if(!routeList)return;
+ renderClearRoutesControl(routeList);
+ let panel=document.getElementById('duplicateRoutePanel');
+ if(!panel){panel=document.createElement('div');panel.id='duplicateRoutePanel';panel.className='city-card duplicate-route-panel';routeList.before(panel)}
+ if(!document.getElementById('duplicateRouteStyles')){
+  let style=document.createElement('style');style.id='duplicateRouteStyles';style.textContent='.duplicate-route-panel{margin-bottom:12px;padding:12px;border:1px solid #7f663f;border-radius:10px;background:rgba(133,95,43,.12)}.duplicate-route-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;color:#f2c77f;font-size:12px}.duplicate-route-heading small{color:#c1a878}.duplicate-route-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid rgba(242,199,127,.16)}.duplicate-route-row span{min-width:0}.duplicate-route-row b,.duplicate-route-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.duplicate-route-row b{font-size:12px}.duplicate-route-row small{margin-top:3px;color:#aebfc2;font-size:10px}.duplicate-route-row button{flex-shrink:0;padding:6px 8px;border:1px solid #967444;border-radius:7px;background:#54452d;color:#ffe2ad;font-size:10px}.duplicate-route-empty{padding:8px 0;color:#92cbb5;font-size:11px}';document.head.appendChild(style);
+ }
+ let groups=getDuplicateRouteGroups(routeCityFilter),duplicates=groups.reduce((sum,group)=>sum+group.indexes.length-1,0);
+ panel.innerHTML=`<div class="duplicate-route-heading"><b>Проверка повторов${routeCityFilter==='all'?'':' · выбранный город'}</b><small>${duplicates?`${duplicates} лишн.`:'дублей нет'}</small></div>`;
+ if(!groups.length){panel.innerHTML+='<div class="duplicate-route-empty">Повторяющиеся линии появятся здесь. Можно оставить по одному маршруту каждого типа между парой городов.</div>';return}
+ groups.forEach(group=>{
+  let a=cities.find(c=>c.id===group.a),b=cities.find(c=>c.id===group.b),transport={plane:'авиа',train:'поезд',bus:'автобус',ship:'морской'}[group.mode]||group.mode,city=routeCityFilter==='all'?'':`${cities.find(c=>c.id===routeCityFilter)?.name||''} · `;
+  let row=document.createElement('div');row.className='duplicate-route-row';row.innerHTML=`<span><b>${htmlSafe(city)}${htmlSafe(a?.name||'—')} ↔ ${htmlSafe(b?.name||'—')}</b><small>${htmlSafe(transport)} · ${group.indexes.length} одинаковых линий</small></span><button type="button" data-remove-duplicate="${htmlSafe(group.key)}">Оставить одну</button>`;
+  row.querySelector('[data-remove-duplicate]').onclick=()=>removeDuplicateRoutes(group.key);panel.appendChild(row);
+ });
+}
+const updateRouteCardsWithDuplicateCheck=updateRouteCards;
+updateRouteCards=function(){updateRouteCardsWithDuplicateCheck();renderDuplicateRoutePanel()};
+renderDuplicateRoutePanel();
 })();
-if('serviceWorker' in navigator && location.protocol!=='file:'){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
+if('serviceWorker' in navigator && location.protocol!=='file:'){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>reg.update()).catch(()=>{}))}
 </script></body></html>
