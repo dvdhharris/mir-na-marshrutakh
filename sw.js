@@ -1,4 +1,4 @@
-const CACHE = 'mir-na-marshrutakh-v7';
+const CACHE = 'mir-na-marshrutakh-v9';
 const APP_SHELL = ['./','./index.html','./manifest.webmanifest','./blank-world-map.png','./icons/icon-192.png','./icons/icon-512.png','./icons/icon.svg'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
